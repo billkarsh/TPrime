@@ -8,7 +8,7 @@ TPrime is a postprocessing adjunct to SpikeGLX.
 SpikeGLX is a recording system that acquires data from multiple asynchronous
 data streams. To align these streams, during recording, one channel in each
 stream records a (1Hz, 50% duty cycle) squarewave from a common generator.
-In post processing. event times from stream A can be referenced to a nearby
+In postprocessing, event times from stream A can be referenced to a nearby
 rising edge. That same edge can be located in stream B.
 
 TPrime takes tables of edge times from A and B, and tables of event times
