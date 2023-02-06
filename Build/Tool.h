@@ -92,11 +92,11 @@ public:
 
 private:
     bool loadEdges( Stream &S );
+    bool loadOffsets( Stream &S );
+    int typeAndIP( int &ip, const QString &name, QString *error );
     void doEvents( const Events &E );
 };
 
 #endif  // TOOL_H
-
-
 
 

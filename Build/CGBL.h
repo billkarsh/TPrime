@@ -11,6 +11,7 @@
 struct Stream {
     QString         fedges;
     QVector<double> edges;
+    QVector<double> off;
     Stream()                                            {}
     Stream( const QString &fedges ) : fedges(fedges)    {}
 };
@@ -31,11 +32,15 @@ public:
     Stream              tostream;
     QMap<int,Stream>    fromstream;
     QVector<Events>     events;
+    QString             offsets;
 
 public:
     CGBL() : period(0)  {}
 
     bool SetCmdLine( int argc, char* argv[] );
+
+private:
+    QString trim_adjust_slashes( const QString &dir );
 };
 
 /* --------------------------------------------------------------- */

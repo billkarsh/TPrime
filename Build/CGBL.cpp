@@ -25,7 +25,7 @@ static void PrintUsage()
     Log() << "+ Map from-stream event times into to-stream times.";
     Log() << "Run messages are appended to TPrime.log in the current working directory.\n";
     Log() << "Usage:";
-    Log() << ">TPrime -syncperiod=1.0 -tostream=path/edgefile.txt <from_data>\n";
+    Log() << ">TPrime -syncperiod=1.0 -tostream=path/edgefile.txt <from_data> [ options ]\n";
     Log() << "From_data:";
     Log() << "-fromstream=5,path/edgefile.txt                        ;stream_index,edge_times";
     Log() << "-events=5,path/in_eventfile.txt,path/out_eventfile.txt ;stream_index,in_event_times,out_event_times";
@@ -36,6 +36,9 @@ static void PrintUsage()
 /* CGBL ----------------------------------------------------------- */
 /* ---------------------------------------------------------------- */
 
+/* --------------------------------------------------------------- */
+/* Public -------------------------------------------------------- */
+/* --------------------------------------------------------------- */
 
 bool CGBL::SetCmdLine( int argc, char* argv[] )
 {
@@ -49,7 +52,7 @@ bool CGBL::SetCmdLine( int argc, char* argv[] )
         if( GetArg( &period, "-syncperiod=%lf", argv[i] ) )
             ;
         else if( GetArgStr( sarg, "-tostream=", argv[i] ) )
-            tostream.fedges = sarg;
+            tostream.fedges = trim_adjust_slashes( sarg );
         else if( GetArgStr( sarg, "-fromstream=", argv[i] ) ) {
 
             const QStringList   sl = QString(sarg).split( ",", QString::SkipEmptyParts );
@@ -57,7 +60,8 @@ bool CGBL::SetCmdLine( int argc, char* argv[] )
             if( sl.count() != 2 )
                 goto bad_param;
 
-            fromstream[sl.at(0).toInt( &ok )] = Stream( sl.at(1) );
+            fromstream[sl.at(0).toInt( &ok )] =
+                Stream( trim_adjust_slashes( sl.at(1) ) );
 
             if( !ok )
                 goto bad_param;
@@ -69,15 +73,20 @@ bool CGBL::SetCmdLine( int argc, char* argv[] )
             if( sl.count() != 3 )
                 goto bad_param;
 
-            events.push_back( Events( sl.at(0).toInt( &ok ), sl.at(1), sl.at(2) ) );
+            events.push_back(
+                Events( sl.at(0).toInt( &ok ),
+                    trim_adjust_slashes( sl.at(1) ),
+                    trim_adjust_slashes( sl.at(2) ) ) );
 
             if( !ok )
                 goto bad_param;
         }
+        else if( GetArgStr( sarg, "-offsets=", argv[i] ) )
+            offsets = trim_adjust_slashes( sarg );
         else {
 bad_param:
             Log() <<
-            QString("Did not understand option '%1'.").arg( argv[i] );
+            QString("Did not understand option '%1'").arg( argv[i] );
             return false;
         }
     }
@@ -95,10 +104,16 @@ bad_param:
         return false;
     }
 
+    if( !offsets.isEmpty() && !QFileInfo( offsets ).exists() ) {
+        Log() << QString("Offsets file does not exist: [%1]").arg( offsets );
+        return false;
+    }
+
 // Echo
 
-    QString sfrom   = "",
-            sevents = "";
+    QString sfrom       = "",
+            sevents     = "",
+            soffsets    = "";
 
     QMap<int,Stream>::iterator  it = fromstream.begin();
 
@@ -113,14 +128,30 @@ bad_param:
                     .arg( E.istream ).arg( E.fin ).arg( E.fout );
     }
 
+    if( !offsets.isEmpty() )
+        soffsets = QString(" -offsets=%1").arg( offsets );
+
     Log() <<
-        QString("Cmdline: TPrime -syncperiod=%1 -tostream=%2%3%4")
+        QString("Cmdline: TPrime -syncperiod=%1 -tostream=%2%3%4%5")
         .arg( period, 0, 'f', 6 )
         .arg( tostream.fedges )
         .arg( sfrom )
-        .arg( sevents );
+        .arg( sevents )
+        .arg( soffsets );
 
     return true;
+}
+
+/* --------------------------------------------------------------- */
+/* Private ------------------------------------------------------- */
+/* --------------------------------------------------------------- */
+
+QString CGBL::trim_adjust_slashes( const QString &dir )
+{
+    QString s = dir.trimmed();
+
+    s.replace( "\\", "/" );
+    return s.remove( QRegExp("/+$") );
 }
 
 

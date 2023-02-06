@@ -24,6 +24,9 @@ bool InFileTxt::open( const QString &path )
 }
 
 
+// Read up to BLOCKVALS values from file into D[].
+// Return count.
+//
 int InFileTxt::getData()
 {
     if( isEOF )
@@ -78,6 +81,9 @@ bool InFileNpy::open( const QString &path )
 }
 
 
+// Read up to BLOCKVALS values from file into D[].
+// Return count.
+//
 int InFileNpy::getData()
 {
     if( isEOF )
@@ -209,7 +215,7 @@ void Tool::entrypoint()
 bool Tool::loadEdges( Stream &S )
 {
     if( !QFileInfo( S.fedges ).exists() ) {
-        Log() << QString("From file does not exist: [%1]").arg( S.fedges );
+        Log() << QString("Edge file does not exist: [%1]").arg( S.fedges );
         return false;
     }
 
@@ -236,7 +242,116 @@ bool Tool::loadEdges( Stream &S )
         return false;
     }
 
+    return loadOffsets( S );
+}
+
+
+// Offset list from file:   [X, ..., 1E99], X < 0 if startsecs option.
+// Offset list default:     [0, 1E99].
+//
+bool Tool::loadOffsets( Stream &S )
+{
+    if( !GBL.offsets.isEmpty() ) {
+
+        QString msg;
+        int     ip, type = typeAndIP( ip, S.fedges, &msg );
+
+        if( type < 0 ) {
+            Log() << msg;
+            return false;
+        }
+
+        QFile   f( GBL.offsets );
+        if( !f.open( QIODevice::ReadOnly | QIODevice::Text ) ) {
+            Log() << QString("Error opening file: [%1]").arg( GBL.offsets );
+            return false;
+        }
+
+        QString key, line;
+
+        switch( type ) {
+            case 0: key = QString("sec_imap%1:").arg( ip ); break;
+            case 1: key = QString("sec_imlf%1:").arg( ip ); break;
+            case 2: key = QString("sec_obx%1:").arg( ip ); break;
+            case 3: key = "sec_nidq:"; break;
+        }
+
+        while( !(line = f.readLine()).isEmpty() ) {
+
+            if( line.startsWith( key ) ) {
+
+                const QStringList   sl = line.split(
+                                            QRegExp("\\s+"),
+                                            QString::SkipEmptyParts );
+                int                 n  = sl.size();
+
+                if( n < 2 || sl.at( 0 ) != key ) {
+                    Log() << QString("Offsets key [%1] has bad format").arg( key );
+                    f.close();
+                    return false;
+                }
+
+                for( int i = 1; i < n; ++i )
+                    S.off.push_back( sl.at( i ).toDouble() );
+
+                break;
+            }
+        }
+
+        f.close();
+
+        if( !S.off.size() ) {
+            Log() << QString("No offsets for file: [%1]").arg( S.fedges );
+            return false;
+        }
+    }
+    else
+        S.off.push_back( 0 );
+
+    S.off.push_back( 1E99 );
     return true;
+}
+
+
+// Return type code {-1=error, 0=AP, 1=LF, 2=OB, 3=NI}.
+//
+// ip = {-1=NI, 0+=substream}.
+//
+int Tool::typeAndIP( int &ip, const QString &name, QString *error )
+{
+    int type    = -1;
+    ip          = -1;
+
+    QString fname_no_path = QFileInfo( name ).fileName();
+    QRegExp re_ap("\\.imec(\\d+)?\\.ap\\."),
+            re_lf("\\.imec(\\d+)?\\.lf\\."),
+            re_ob("\\.obx(\\d+)?\\.obx\\.");
+
+    re_ap.setCaseSensitivity( Qt::CaseInsensitive );
+    re_lf.setCaseSensitivity( Qt::CaseInsensitive );
+    re_ob.setCaseSensitivity( Qt::CaseInsensitive );
+
+    if( fname_no_path.contains( re_ap ) ) {
+        type    = 0;
+        ip      = re_ap.cap(1).toInt();
+    }
+    else if( fname_no_path.contains( re_lf ) ) {
+        type    = 1;
+        ip      = re_lf.cap(1).toInt();
+    }
+    else if( fname_no_path.contains( re_ob ) ) {
+        type    = 2;
+        ip      = re_ob.cap(1).toInt();
+    }
+    else if( fname_no_path.contains( ".nidq.", Qt::CaseInsensitive ) )
+        type = 3;
+    else if( error ) {
+        *error =
+            QString("Missing type key in file name [%1]")
+            .arg( fname_no_path );
+    }
+
+    return type;
 }
 
 
@@ -273,7 +388,7 @@ void Tool::doEvents( const Events &E )
     else if( E.fin.contains( reNpy ) )
         fin = new InFileNpy();
     else {
-        Log() << QString("Event file has unknown extension: [%1]").arg( E.fin );
+        Log() << QString("Event input file has unknown extension: [%1]").arg( E.fin );
         return;
     }
 
@@ -289,7 +404,7 @@ void Tool::doEvents( const Events &E )
     else if( E.fout.contains( reNpy ) )
         fout = new OutFileNpy();
     else {
-        Log() << QString("Event file has unknown extension: [%1]").arg( E.fout );
+        Log() << QString("Event output file has unknown extension: [%1]").arg( E.fout );
         goto close_in;
     }
 
@@ -306,35 +421,86 @@ void Tool::doEvents( const Events &E )
         // Init edge track
         // ---------------
 
-        double  halfper = 0.5 * GBL.period;
-        int     ito     = 0,
-                ifm     = 0,
-                nto     = GBL.tostream.edges.size(),
-                nfm     = FS.edges.size(),
-                nd;
+        double  halfper = 0.5 * GBL.period,
+                to_llim = GBL.tostream.off[0],
+                fm_llim = FS.off[0],
+                fm_ulim = FS.off[1];
+        int     ito_edg = 0,    // move edge up from here
+                ifm_edg = 0,    // move edge up from here
+                nto_edg = GBL.tostream.edges.size(),
+                nfm_edg = FS.edges.size(),
+                ioff    = 0,    // composing file containing evt
+                nevt;
 
         // -----------
         // Loop events
         // -----------
 
-        while( (nd = fin->getData()) ) {
+        while( (nevt = fin->getData()) ) {
 
-            for( int id = 0; id < nd; ++id ) {
+            for( int ievt = 0; ievt < nevt; ++ievt ) {
 
-                double  evt = fin->D[id],
-                        eto = GBL.tostream.edges[ito],
-                        efm = FS.edges[ifm];
+                double  evt = fin->D[ievt],
+                        eto = GBL.tostream.edges[ito_edg],
+                        efm = FS.edges[ifm_edg];
+
+                // Which file contains event
+
+                while( evt >= fm_ulim ) {
+                    ++ioff;
+                    fm_llim = fm_ulim;
+                    to_llim = GBL.tostream.off[ioff];
+                    fm_ulim = FS.off[ioff + 1];
+                }
 
                 // Find nearest previous edges
 
                 if( eto < evt ) {
-                    while( ito + 1 < nto && GBL.tostream.edges[ito + 1] <= evt )
-                        eto = GBL.tostream.edges[++ito];
+                    while( ito_edg + 1 < nto_edg && GBL.tostream.edges[ito_edg + 1] <= evt )
+                        eto = GBL.tostream.edges[++ito_edg];
                 }
 
                 if( efm < evt ) {
-                    while( ifm + 1 < nfm && FS.edges[ifm + 1] <= evt )
-                        efm = FS.edges[++ifm];
+                    while( ifm_edg + 1 < nfm_edg && FS.edges[ifm_edg + 1] <= evt )
+                        efm = FS.edges[++ifm_edg];
+                }
+
+                // Evt and edges optimally from same composing file
+
+                if( eto < to_llim ) {
+
+                    // Find first edge in next file
+
+                    int i_edg = ito_edg;
+
+                    while( i_edg + 1 < nto_edg ) {
+                        eto = GBL.tostream.edges[++i_edg];
+                        if( eto >= to_llim )
+                            break;
+                    }
+
+                    // Ensure edge is before evt
+
+                    while( eto > evt )
+                        eto -= GBL.period;
+                }
+
+                if( efm < fm_llim ) {
+
+                    // Find first edge in next file
+
+                    int i_edg = ifm_edg;
+
+                    while( i_edg + 1 < nfm_edg ) {
+                        efm = FS.edges[++i_edg];
+                        if( efm >= fm_llim )
+                            break;
+                    }
+
+                    // Ensure edge is before evt
+
+                    while( efm > evt )
+                        efm -= GBL.period;
                 }
 
                 // Adjust eto to less than half-period of efm
@@ -352,10 +518,10 @@ void Tool::doEvents( const Events &E )
 
                 // Report relative to edge
 
-                fin->D[id] = eto + (evt - efm);
+                fin->D[ievt] = eto + (evt - efm);
             }
 
-            fout->putData( fin->D, nd );
+            fout->putData( fin->D, nevt );
         }
 
     }   // process scope
