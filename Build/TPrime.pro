@@ -38,6 +38,6 @@ QMAKE_TARGET_COMPANY = Bill Karsh
 QMAKE_TARGET_PRODUCT = TPrime
 QMAKE_TARGET_DESCRIPTION = Remaps event times
 QMAKE_TARGET_COPYRIGHT = (c) 2020, Bill Karsh, All rights reserved
-VERSION = 1.8
+VERSION = 1.9
 
 
