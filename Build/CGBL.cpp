@@ -86,7 +86,7 @@ bool CGBL::SetCmdLine( int argc, char* argv[] )
         else {
 bad_param:
             Log() <<
-            QString("Did not understand option '%1'").arg( argv[i] );
+            QString("Did not understand option '%1'.").arg( argv[i] );
             return false;
         }
     }
